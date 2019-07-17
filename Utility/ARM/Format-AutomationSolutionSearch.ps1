@@ -33,6 +33,12 @@
     It is also used by logic that removes duplicate hybrid worker entries
     Default is 7 days
 
+.PARAMETER IgnoreLinuxMissingTag
+    Optional. As Linux VMs need the VMUUID tag to correctly be identified an not removed from the solution search.
+    This setting will override default behavior not to do cleanup of VMUUID if Linux VMs without the VMUUID tag is detected.
+    Default is $False, this will skip cleaning search if a Linux VM without VMUUID tag is detected.
+    Set to $True to force VMUUID cleanup even if Linux VMs without the VMUUID tag is detected.
+
 .NOTES
     AUTHOR: Morten Lerudjordet
     LASTEDIT: July 9th, 2019
@@ -40,7 +46,11 @@
 #Requires -Version 5.0
 param(
     [ValidateRange(0, [double]::MaxValue)]
-    [double]$HybridWorkerStaleNrDays = 7
+    [double]$HybridWorkerStaleNrDays = 7,
+
+    [Parameter(Mandatory = $False)]
+    [Boolean]
+    $IgnoreLinuxMissingTag = $False
 )
 try
 {
@@ -312,7 +322,7 @@ try
                     }
                     if($AllAzureVMs)
                     {
-                        if(-not $SkipVMUUIDCleanup)
+                        if(-not $SkipVMUUIDCleanup -or $IgnoreLinuxMissingTag)
                         {
                             # Get VM Ids that are no longer alive
                             $DeletedVmIds = Compare-Object -ReferenceObject $VmIds -DifferenceObject $AllAzureVMs -Property VmId | Where-Object {$_.SideIndicator -eq "<="}
