@@ -89,6 +89,7 @@ try
     {
         Write-Output -InputObject "Will try to discover Log Analytics workspace id"
     }
+    $SolutionUpdateDeploymentName = "Automation-SolutionQueryUpdate-"
     $SolutionApiVersion = "2017-04-26-preview"
     $SolutionTypes = @("Updates", "ChangeTracking")
     #endregion
@@ -275,16 +276,21 @@ try
                 # Get all VMs from Computer and VMUUID  in Query
                 $VmIds = (((Select-String -InputObject $SolutionQuery -Pattern "VMUUID in~ \((.*?)\)").Matches.Groups[1].Value).Split(",")).Replace("`"", "") | Where-Object {$_} | Select-Object -Property @{l = "VmId"; e = {$_.Trim()}}
                 $VmNames = (((Select-String -InputObject $SolutionQuery -Pattern "Computer in~ \((.*?)\)").Matches.Groups[1].Value).Split(",")).Replace("`"", "")  | Where-Object {$_} | Select-Object -Property @{l = "Name"; e = {$_.Trim()}}
-
-                # Remove empty elements
-                if (($SolutionQuery -match ',"",') -or ($SolutionQuery -match '", "') -or ($SolutionQuery -match ',""') )
+                # Remove empty elements or fix missing quotes
+                if (($SolutionQuery -match ',"",') -or ($SolutionQuery -match '", "') -or ($SolutionQuery -match ',""') -or ($SolutionQuery -match '",[)]') -or ($SolutionQuery -match 'VMUUID in~ [()]') -or ($SolutionQuery -match 'Computer in~ [()]') )
                 {
+                    Write-Verbose -Message "Fixing unwanted elements in saved query"
+                    # Fix removed quotes
+                    $UpdatedQuery = $SolutionQuery.Replace('VMUUID in~ ()', 'VMUUID in~ ("")')
+                    $UpdatedQuery = $UpdatedQuery.Replace('Computer in~ ()', 'Computer in~ ("")')
                     # Clean search of whitespace between elements
-                    $UpdatedQuery = $SolutionQuery.Replace('", "', '","')
+                    $UpdatedQuery = $UpdatedQuery.Replace('", "', '","')
                     # Clean empty elements from search
                     $UpdatedQuery = $UpdatedQuery.Replace(',"",', ',')
                     # Clean empty end element from search
                     $UpdatedQuery = $UpdatedQuery.Replace(',""', '')
+                    # Clean orphan comma
+                    $UpdatedQuery = $UpdatedQuery.Replace('",)', '")')
                 }
 
                 if ($Null -ne $VmIds)
@@ -317,11 +323,11 @@ try
                                 Write-Output -InputObject "Removing duplicate VM entry with Id: $($DuplicateVmID.VmId) from saved search"
                                 if($UpdatedQuery -match $DuplicateVmID.VmId)
                                 {
-                                    $UpdatedQuery = $SolutionQuery.Replace(",`"$($DuplicateVmID.VmId)`"", "")
+                                    $UpdatedQuery = $UpdatedQuery.Replace(",`"$($DuplicateVmID.VmId)`"", "")
                                     # Check if last element in search
                                     if($UpdatedQuery -match $DuplicateVmID.VmId)
                                     {
-                                        $UpdatedQuery = $SolutionQuery.Replace("`"$($DuplicateVmID.VmId)`"", '""')
+                                        $UpdatedQuery = $UpdatedQuery.Replace("`"$($DuplicateVmID.VmId)`"", '""')
                                     }
                                 }
                             }
@@ -362,18 +368,13 @@ try
                                         $UpdatedQuery = $UpdatedQuery.Replace("`"$($DeletedVmId.VmId)`",", "")
                                         Write-Output -InputObject "Removing VM with Id: $($DeletedVmId.VmId) from saved search"
                                         # check if end element in search
-                                        if($UpdatedQuery -match $DeletedVmIds.VmId)
+                                        if($UpdatedQuery -match $DeletedVmId.VmId)
                                         {
-                                            $UpdatedQuery = $SolutionQuery.Replace(",`"$($DeletedVmIds.VmId)`"", "")
-                                                                                        # Check if last element in search
-                                            if($UpdatedQuery -match $DeletedVmIds.VmId)
+                                            $UpdatedQuery = $UpdatedQuery.Replace(",`"$($DeletedVmId.VmId)`"", "")
+                                            # Check if last element in search
+                                            if($UpdatedQuery -match $DeletedVmId.VmId)
                                             {
-                                                $UpdatedQuery = $SolutionQuery.Replace("`"$($DeletedVmIds.VmId)`"", "")
-                                                # Check if last element in search
-                                                if($UpdatedQuery -match $DeletedVmIds.VmId)
-                                                {
-                                                    $UpdatedQuery = $SolutionQuery.Replace("`"$($DeletedVmIds.VmId)`"", '""')
-                                                }
+                                                $UpdatedQuery = $UpdatedQuery.Replace("`"$($DeletedVmId.VmId)`"", '""')
                                             }
                                         }
                                     }
@@ -428,10 +429,10 @@ try
                                 Write-Output -InputObject "Removing duplicate VM entry with Name: $($DuplicateVm.Name) from saved search"
                                 if($UpdatedQuery -match $DuplicateVm.Name)
                                 {
-                                    $UpdatedQuery = $SolutionQuery.Replace(",`"$($DuplicateVm.Name)`"", "")
+                                    $UpdatedQuery = $UpdatedQuery.Replace(",`"$($DuplicateVm.Name)`"", "")
                                     if($UpdatedQuery -match $DuplicateVm.Name)
                                     {
-                                        $UpdatedQuery = $SolutionQuery.Replace("`"$($DuplicateVm.Name)`"", '""')
+                                        $UpdatedQuery = $UpdatedQuery.Replace("`"$($DuplicateVm.Name)`"", '""')
                                     }
                                 }
                             }
@@ -468,10 +469,10 @@ try
                                     Write-Output -InputObject "Removing VM with Name: $($DeletedVmId.Name) from saved search"
                                     if($UpdatedQuery -match $DeletedVmId.Name)
                                     {
-                                        $UpdatedQuery = $SolutionQuery.Replace(",`"$($DeletedVmId.Name)`"", "")
+                                        $UpdatedQuery = $UpdatedQuery.Replace(",`"$($DeletedVmId.Name)`"", "")
                                         if($UpdatedQuery -match $DeletedVmId.Name)
                                         {
-                                            $UpdatedQuery = $SolutionQuery.Replace("`"$($DeletedVmId.Name)`"", '""')
+                                            $UpdatedQuery = $UpdatedQuery.Replace("`"$($DeletedVmId.Name)`"", '""')
                                         }
                                     }
                                 }
@@ -587,12 +588,12 @@ try
                     $QueryDeploymentParams.Add("apiVersion", $SolutionApiVersion)
 
                     # Create deployment name
-                    $DeploymentName = "AutomationControl-PS-" + (Get-Date).ToFileTimeUtc()
+                    $DeploymentName = $SolutionUpdateDeploymentName + (Get-Date).ToFileTimeUtc()
 
-                    $ObjectOutPut = New-AzResourceGroupDeployment -ResourceGroupName $WorkspaceInfo.ResourceGroupName -TemplateFile $TempFile.FullName `
+                    $ObjectOutPut = New-AzureRMResourceGroupDeployment -ResourceGroupName $WorkspaceInfo.ResourceGroupName -TemplateFile $TempFile.FullName `
                         -Name $DeploymentName `
                         -TemplateParameterObject $QueryDeploymentParams `
-                        -AzContext $SubscriptionContext -ErrorAction Continue -ErrorVariable oErr
+                        -AzureRMContext $SubscriptionContext -ErrorAction Continue -ErrorVariable oErr
                     if ($oErr)
                     {
                         Write-Error -Message "Failed to update solution type: $SolutionType saved search" -ErrorAction Stop
